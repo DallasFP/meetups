@@ -1,0 +1,59 @@
+name:                what-why-transformers
+version:             0.1.0.0
+synopsis:            Initial project template from stack
+description:         Please see README.md
+homepage:            https://github.com/githubuser/what-why-transformers#readme
+license:             ISC
+license-file:        LICENSE
+author:              Author name here
+maintainer:          example@example.com
+copyright:           2016 Author name here
+category:            Web
+build-type:          Simple
+-- extra-source-files:
+cabal-version:       >=1.10
+
+library
+  hs-source-dirs:      src
+  exposed-modules:     E01_Bare
+                     , E02_Transformers
+                     , E03_Mtl
+  other-modules:       Common
+  build-depends:       base
+                     , classy-prelude
+                     , aeson
+                     , bcrypt
+                     , raw-strings-qq
+                     , resource-pool
+                     , sqlite-simple
+                     , transformers
+                     , mtl
+  default-language:    Haskell2010
+
+executable bare
+  hs-source-dirs:      app
+  main-is:             Bare.hs
+  ghc-options:         -threaded -rtsopts -with-rtsopts=-N
+  build-depends:       base
+                     , what-why-transformers
+  default-language:    Haskell2010
+
+executable transformers
+  hs-source-dirs:      app
+  main-is:             Transformers.hs
+  ghc-options:         -threaded -rtsopts -with-rtsopts=-N
+  build-depends:       base
+                     , what-why-transformers
+  default-language:    Haskell2010
+
+executable mtl
+  hs-source-dirs:      app
+  main-is:             Mtl.hs
+  ghc-options:         -threaded -rtsopts -with-rtsopts=-N
+  build-depends:       base
+                     , what-why-transformers
+  default-language:    Haskell2010
+
+source-repository head
+  type:     git
+  location: https://github.com/githubuser/what-why-transformers

@@ -1,0 +1,381 @@
+* A Project in F#, OCaml, and Haskell
+
+* Project Overview
+
+User/System Events
+     |
+     V
+PostgreSQL
+     |
+     | notification message w/payload
+     V
+Application -> Sms Gateway
+     |
+     V
+SMTP Server
+
+* OCaml
+
+* Emacs
+** ocp-indent (auto-formatting)
+** merlin     (auto-completion)
+
+* Compiler & package manager
+** opam
+
+* Project/Build tools
+** ocamlbuild
+** jenga
+** obuild
+** ocp-build
+** omake
+** ogen
+
+** went with oasis
+*** declarative configuration
+*** generates ocamlbuild files & Makefile
+*** easy to use
+*** documentation
+
+** example
+#+begin_src language ocaml
+OASISFormat:   0.4
+Name:          Reach Notifier
+Version:       0.9.0
+Synopsis:      Email and SMS notification system
+Authors:       Jonathan Curran
+License:       PROP
+Plugins:       META (0.4),
+               DevFiles (0.4)
+OCamlVersion:  >= 4.01
+BuildTools:    ocamlbuild
+BuildDepends:  curl (>= 0.7.6),
+               lwt (>= 2.5.1),
+               mustache (>= 2.1.0),
+               postgresql (>= 4.0.1),
+               ppx_deriving (>= 3.0),
+               ppx_deriving_yojson (>= 2.4),
+               result (>= 1.0)
+
+Flag coverage
+  Description: Collect coverage data
+  Default:     false
+
+Library reachlib
+  Install:       false
+  Path:          src
+  Modules:       Config,
+                 Database,
+                 Notifications,
+                 Smtp
+
+  BuildDepends:  curl,
+                 curl.lwt,
+                 lwt.ppx,
+                 lwt.preemptive,
+                 lwt.unix,
+                 ppx_deriving.std,
+                 ppx_deriving_yojson,
+                 threads
+
+Executable reachnotify
+  CompiledObject: native
+  Path:           src
+  MainIs:         Main.ml
+  BuildDepends:   reachlib
+
+Executable test
+  Install:        false
+  CompiledObject: native
+  Path:           test
+  MainIs:         Tests.ml
+  BuildDepends:   reachlib,
+                  alcotest (>= 0.4.6)
+
+Test main
+  Type:    Custom (0.4)
+  Command: $test
+  Run:     true
+#+end_src
+
+* Libraries
+** DB   : postgresql-ocaml
+** JSON : ppx_deriving + yojson
+#+begin_src language ocaml
+type text_message =
+  { phones: string list;
+    message: string;
+  } [@@deriving yojson]
+
+(* generated functions *)
+val text_message_of_yojson : Yojson.Safe.json -> text_message
+val text_message_to_yojson : text_message -> Yojson.Safe.json
+#+end_src
+** SMTP : curl
+** HTTP : curl
+** Templates : mustache
+
+* Application structure
+** Read configuration from environment
+*** Database & SMTP connection params
+*** API keys
+** Single threaded
+** LWT - cooperative threads
+*** Main thread allocated to LWT
+**** curl library supports LWT
+*** Additional thread for PostgreSQL notifications (non-LWT)
+*** Communicate via thread-safe stream/channel
+
+* Testing
+** Lots of libraries
+** Alcotest
+#+begin_src language ocaml
+let data =
+  let b = Buffer.create 15 in
+  Buffer.add_string b "hellotherematey";
+  b
+
+let yield_chunks_tests = "yield chunks", [
+
+    "fixed size", `Quick, (fun () ->
+        let fn = Smtp.yield_chunks data in
+        Alcotest.(check @@ list string) "fixed size"
+          ["hello"; "there"; "matey"; ""; ""]
+          (List.rev [fn 5; fn 5; fn 5; fn 5; fn 5]))
+    ;
+
+    "variable size", `Quick, (fun () ->
+        let fn = Smtp.yield_chunks data in
+        Alcotest.(check @@ list string) "variable size"
+          ["hello"; "the"; "rem"; "atey"; ""; ""]
+          (List.rev [fn 5; fn 5; fn 4; fn 3; fn 3; fn 5]))
+  ]
+
+let _ =
+  Alcotest.run "Smtp" [yield_chunks_tests]
+#+end_src
+
+* Misc
+** Code coverage
+*** Bisect
+
+* Overall Experience
+
+* F#
+
+* Package manager
+** Paket (not quite standalone)
+** Nuget
+
+* Project/Build tools
+** Forge
+** Fake
+
+** msbuild
+
+* Emacs
+** emacs-fsharp-mode
+
+* Libraries
+** DB   : ngpsql
+** JSON : chiron
+#+begin_src language fsharp
+type Sms =
+    { From: string
+      To: string list
+      Content: string
+      Url: string option
+      Log: bool }
+
+    static member ToJson(s: Sms) =
+        Json.write "src" s.From
+        *> Json.write "dst" (String.concat "<" s.To)
+        *> Json.write "text" s.Content
+        *> Json.writeUnlessDefault "url" None s.Url
+        *> Json.write "log" s.Log
+
+
+type SmsSuccess =
+    { Message: string
+      Uuid: string list
+      ApiId: string }
+
+    static member FromJson(_: SmsSuccess) =
+            fun m u a ->
+                { Message = m
+                  Uuid = u
+                  ApiId = a }
+        <!> Json.read "message"
+        <*> Json.read "message_uuid"
+        <*> Json.read "api_id"
+#+end_src
+** SMTP : built-in > mailkit
+** HTTP : built-in
+
+* Application structure
+** Read configuration from environment
+** Actor model for main application
+*** Mailbox invokes sms/mail API
+*** Looks single threaded
+*** Delegate for Npgsql
+#+begin_src language fsharp
+let onNotify (mailbox: Agent<Notification>) (ev: Npgsql.NpgsqlNotificationEventArgs) =
+  Notification.Of ev.Condition ev.AdditionalInformation
+  |> mailbox.Post
+
+// in main
+db.Notification.Add <| onNotify mailbox
+#+end_src
+*** Task for Http
+#+begin_src language fsharp
+async {
+  use reqStream = req.GetRequestStream()
+  do! reqStream.WriteAsync(bytes, 0, bytes.Length) |> Async.AwaitTask
+
+  let! res = req.GetResponseAsync() |> Async.AwaitTask
+
+  use resStream = res.GetResponseStream()
+  use reader = new System.IO.StreamReader(resStream)
+
+  let! responseText = reader.ReadToEndAsync() |> Async.AwaitTask
+  return (res :?> HttpWebResponse).StatusCode, responseText |> Json.parse
+}
+#+end_src
+*** Async for SMTP
+#+begin_src language fsharp
+type Mailer () =
+  member a.Send task =
+    async {
+      // ... other stuff
+      let! completed = 
+        Async.AwaitIAsyncResult(smtp.SendAsync msg,
+                                millisecondsTimeout = 15 * 1000)
+      return completed
+    }
+#+end_src
+** F# async computations
+
+* Testing
+** Fuchu + Unquote
+
+* Overall Experience
+
+* Haskell
+
+* Project/Build tools
+** cabal
+*** hackage
+** stack
+*** stackage
+
+* Emacs
+** spacemacs
+
+** ghc-mod
+** hlint
+** stylish-haskell
+
+* Libraries
+** DB   : postgresql-simple
+** JSON : aeson
+#+begin_src language haskell
+data NewAccount =
+  NewAccount
+  { naName  :: !Text
+  , naEmail :: !Text
+  , naType  :: !Text
+  , naLink  :: !Text
+  } deriving (Generic, Show)
+
+instance FromJSON NewAccount
+instance ToJSON NewAccount where
+#+end_src
+** SMTP : smtp-mail
+#+begin_src language haskell
+sendEmail :: Email -> App ()
+sendEmail Email{..} = do
+  let mail = simpleMail emailFrom emailTo 
+             [] []  -- cc bcc
+             emailSubject 
+             [plainTextPart emailMessage]
+  liftIO $ sendMail emailHost emailPort mail
+#+end_src
+** HTTP : wreq
+#+begin_src language haskell
+sendSms :: Sms -> App ()
+sendSms sms = do
+  authId    <- plivoAuthId <$> asks
+  authToken <- plivoAuthToken <$> asks
+  altPhone  <- plivoAltPhone <$> asks
+  shouldRedirect <- smsRedirect <$> asks
+  let url   = "https://api.plivo.com/v1/Account/" <> authId <> "/Message/"
+      opts  = defaults & auth ?~ basicAuth authId authToken
+      payload = toJSON $
+        case shouldRedirect of
+          Nothing -> sms
+          Just n  -> sms {smsFrom = altPhone}
+liftIO (postWith opts url payload >>= asJSON :: IO (Response SmsSuccess))
+#+end_src
+** Templates : mustache
+#+begin_src language haskell
+instance ToMustache NewAccount where
+  toMustache NewAccount{..} = object
+    [ "name"  ~= naName
+    , "email" ~= naEmail
+    , "link"  ~= naLink
+    ]
+#+end_src
+** Pooling   : resource-pool
+** Logging   : logging
+** others    : file-embed, mtl
+
+* Application structure
+** Guts of the app is a Monad Transformer
+** Main simply:
+*** reads env
+*** listens for notifications in loop
+*** each job is launched in a spark
+*** where the job is running a function in our Monad Transformer
+** App type
+#+begin_src
+newtype App a =
+  App
+  { unApp :: ReaderT AppEnv (ExceptT Text IO) a
+  }
+  deriving
+  ( Functor
+  , Applicative
+  , Monad
+  , MonadReader AppEnv
+  , MonadError Text
+  , MonadIO
+  )
+
+runApp :: AppEnv -> App a -> IO (Either Text a)
+runApp env app = runExceptT $ runReaderT (unApp app) env
+#+end_src
+
+* Testing
+** lots of libraries
+** hspec
+
+#+begin_src language haskell
+spec :: Spec
+spec = do
+  describe "runTask" $ do
+    it "should not process non-integer task ids" $ do
+      env <- getAppEnv
+      res <- runApp env $ runTask "new_account" "4a"
+      res `shouldBe` Left "Invalid task id"
+
+    it "should only process new_account, invite_applicant, and text_message" $ do
+      env <- getAppEnv
+      res <- runApp env $ runTask "fooey" "4"
+      res `shouldBe` Left "Unsure how to handle task"
+#+end_src
+
+* Misc
+** Internal module pattern
+** Compiler flags
+
+* Overall Experience
